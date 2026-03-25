@@ -15,10 +15,10 @@ interface SidebarLayoutProps {
   children: React.ReactNode;
   navItems: NavItem[];
   title: string;
-  userRole: 'admin' | 'user';
+  userRole?: 'admin' | 'user'; // optional: kept for backward compat but no longer used for redirect
 }
 
-export default function SidebarLayout({ children, navItems, title, userRole }: SidebarLayoutProps) {
+export default function SidebarLayout({ children, navItems, title }: SidebarLayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<{ name: string; username: string; role: string; department: string } | null>(null);
@@ -32,15 +32,13 @@ export default function SidebarLayout({ children, navItems, title, userRole }: S
       })
       .then(data => {
         if (data) {
-          if (data.role !== userRole) {
-            router.push(data.role === 'admin' ? '/admin/dashboard' : '/dashboard');
-          } else {
-            setUser(data);
-          }
+          // Only redirect to login if not authenticated.
+          // Role-based nav is handled by each page passing the correct navItems.
+          setUser(data);
         }
       })
       .catch(() => router.push('/login'));
-  }, [router, userRole]);
+  }, [router]);
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -90,7 +88,7 @@ export default function SidebarLayout({ children, navItems, title, userRole }: S
           </div>
           {!collapsed && (
             <div className="sidebar-logo-text">
-              <div className="title">물류 SCM</div>
+              <div className="title">공정 SCM</div>
               <div className="sub">{title}</div>
             </div>
           )}

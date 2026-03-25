@@ -14,14 +14,18 @@ interface StepProgress {
   note: string; defectCount: number;
 }
 interface WorkOrder {
-  id: string; workOrderNo: string; processId: string; processName: string;
+  id: string; workOrderNo: string;
+  pn: string;              // 업체 P/N (품번)
+  processId: string; processName: string;
   productName: string; targetQty: number; completedQty: number; defectQty: number;
   priority: string; status: string; progressRate: number; currentStep: number;
   steps: StepProgress[];
-  plannedStart: string; plannedEnd: string; actualStart: string; actualEnd: string;
+  plannedStart: string; plannedEnd: string;
+  customerDueDate: string; // 고객사 납기일
+  actualStart: string; actualEnd: string;
   assignedTo: string; createdBy: string; notes: string; createdAt: string;
 }
-interface Process { id: string; processCode: string; name: string; category: string; status: string; steps: { stepNo: number; name: string; stdTime: number }[]; }
+interface Process { id: string; processCode: string; pn: string; name: string; category: string; customer: string; project: string; status: string; steps: { stepNo: number; name: string; company: string; stdTime: number }[]; }
 
 /* ── 상수 ──────────────────────────────────────────── */
 const WO_STATUS = [
@@ -79,10 +83,12 @@ export default function WorkOrdersPage() {
   const [success, setSuccess] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchPN, setSearchPN] = useState('');      // 품번(업체 P/N) 검색
+  const [searchName, setSearchName] = useState('');   // 품명(제품명/공정명) 검색
+  const [searchTerm] = useState('');                  // 미사용(호환성)
 
   /* 작업지시 생성 폼 */
-  const blankForm = { processId: '', productName: '', targetQty: 1, priority: 'normal', plannedStart: '', plannedEnd: '', assignedTo: '', notes: '' };
+  const blankForm = { processId: '', productName: '', targetQty: 1, priority: 'normal', plannedStart: '', plannedEnd: '', customerDueDate: '', assignedTo: '', notes: '' };
   const [form, setForm] = useState(blankForm);
 
   /* 진행도 편집 임시 상태 */
@@ -177,12 +183,52 @@ export default function WorkOrdersPage() {
     }
   };
 
-  /* 필터링 */
+  // searchTerm 미사용 경고 방지
+  void searchTerm;
+
+  /* 필터링 — 품번(업체 P/N) 우선, 품명(제품명) 병행 */
   const filtered = workOrders.filter(w =>
-    (!searchTerm || w.workOrderNo.toLowerCase().includes(searchTerm.toLowerCase()) || w.productName.includes(searchTerm) || w.processName.includes(searchTerm)) &&
+    (!searchPN || (w.pn || '').toLowerCase().includes(searchPN.toLowerCase())) &&
+    (!searchName || w.productName.toLowerCase().includes(searchName.toLowerCase()) || w.processName.toLowerCase().includes(searchName.toLowerCase())) &&
     (!filterStatus || w.status === filterStatus) &&
     (!filterPriority || w.priority === filterPriority)
   );
+
+  /* ── 엑셀(CSV) 내보내기 ── */
+  const exportExcel = () => {
+    const BOM = '\uFEFF';
+    const headers = ['품번(P/N)', '품명(제품명)', '공정명', '우선순위', '목표수량', '완료수량', '불량수량', '진행률(%)', '담당자', '고객사납기일', '상태', '계획시작', '계획완료', '실제시작', '실제완료', '작업지시번호'];
+    const statusLabelMap: Record<string, string> = { pending: '대기', in_progress: '진행중', completed: '완료', paused: '일시정지', cancelled: '취소' };
+    const priorityLabelMap: Record<string, string> = { urgent: '긴급', high: '높음', normal: '보통', low: '낮음' };
+    const rows = filtered.map(w => [
+      w.pn || '',
+      w.productName,
+      w.processName,
+      priorityLabelMap[w.priority] || w.priority,
+      w.targetQty,
+      w.completedQty,
+      w.defectQty,
+      w.progressRate,
+      w.assignedTo || '',
+      w.customerDueDate ? new Date(w.customerDueDate).toLocaleDateString('ko-KR') : '',
+      statusLabelMap[w.status] || w.status,
+      w.plannedStart ? new Date(w.plannedStart).toLocaleDateString('ko-KR') : '',
+      w.plannedEnd ? new Date(w.plannedEnd).toLocaleDateString('ko-KR') : '',
+      w.actualStart ? new Date(w.actualStart).toLocaleDateString('ko-KR') : '',
+      w.actualEnd ? new Date(w.actualEnd).toLocaleDateString('ko-KR') : '',
+      w.workOrderNo,
+    ]);
+    const csv = BOM + [headers, ...rows]
+      .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `작업지시목록_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const getStatus = (v: string) => WO_STATUS.find(s => s.value === v) ?? { label: v, cls: 'badge-gray' };
   const getPriority = (v: string) => PRIORITY.find(p => p.value === v) ?? { label: v, cls: 'badge-gray' };
@@ -198,10 +244,16 @@ export default function WorkOrdersPage() {
           <h2>작업지시 관리</h2>
           <p>공정별 작업지시를 등록하고 단계별 진행도를 입력합니다.</p>
         </div>
-        <button className="btn btn-primary" onClick={() => { setForm(blankForm); setError(''); setCreateModal(true); }}>
-          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-          작업지시 등록
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={exportExcel}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            엑셀 내보내기
+          </button>
+          <button className="btn btn-primary" onClick={() => { setForm(blankForm); setError(''); setCreateModal(true); }}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+            작업지시 등록
+          </button>
+        </div>
       </div>
 
       {success && <div className="alert alert-success">{success}</div>}
@@ -220,20 +272,37 @@ export default function WorkOrdersPage() {
 
       {/* 필터 */}
       <div className="filter-bar">
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <input className="form-input" placeholder="작업지시번호, 제품명, 공정명 검색..."
-            value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 200px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#1d4ed8', letterSpacing: '0.04em' }}>🔑 품번 (업체 P/N)</div>
+          <input className="form-input" placeholder="예) 60830090, 40006510"
+            value={searchPN} onChange={e => setSearchPN(e.target.value)}
+            style={{ borderColor: searchPN ? '#2563eb' : undefined, borderWidth: searchPN ? 2 : undefined }} />
         </div>
-        <select className="form-input" style={{ width: 120 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-          <option value="">전체 상태</option>
-          {WO_STATUS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-        <select className="form-input" style={{ width: 110 }} value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
-          <option value="">전체 우선순위</option>
-          {PRIORITY.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
-        {(searchTerm || filterStatus || filterPriority) && (
-          <button className="btn btn-secondary" onClick={() => { setSearchTerm(''); setFilterStatus(''); setFilterPriority(''); }}>초기화</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 160 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.04em' }}>품명</div>
+          <input className="form-input" placeholder="품명으로 검색"
+            value={searchName} onChange={e => setSearchName(e.target.value)}
+            style={{ borderColor: searchName ? '#2563eb' : undefined }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.04em' }}>상태</div>
+          <select className="form-input" style={{ width: 120 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">전체 상태</option>
+            {WO_STATUS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.04em' }}>우선순위</div>
+          <select className="form-input" style={{ width: 110 }} value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+            <option value="">전체</option>
+            {PRIORITY.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          </select>
+        </div>
+        {(searchPN || searchName || filterStatus || filterPriority) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'flex-end' }}>
+            <div style={{ fontSize: 11, opacity: 0 }}>.</div>
+            <button className="btn btn-secondary" onClick={() => { setSearchPN(''); setSearchName(''); setFilterStatus(''); setFilterPriority(''); }}>초기화</button>
+          </div>
         )}
       </div>
 
@@ -246,15 +315,15 @@ export default function WorkOrdersPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>작업지시번호</th>
-                  <th>제품명</th>
+                  <th style={{ width: 110 }}>품번 (P/N)</th>
+                  <th>품명</th>
                   <th>공정</th>
                   <th>우선순위</th>
                   <th style={{ width: 60, textAlign: 'center' }}>목표</th>
                   <th style={{ width: 60, textAlign: 'center' }}>완료</th>
                   <th style={{ width: 190 }}>진행률</th>
                   <th>담당자</th>
-                  <th>계획 시작</th>
+                  <th style={{ width: 100 }}>고객사 납기일</th>
                   <th>상태</th>
                   <th style={{ textAlign: 'right', paddingRight: 20 }}>관리</th>
                 </tr>
@@ -268,7 +337,15 @@ export default function WorkOrdersPage() {
                   const pc = progressColor(w.progressRate);
                   return (
                     <tr key={w.id}>
-                      <td><span className="text-mono" style={{ fontSize: 12, fontWeight: 700 }}>{w.workOrderNo}</span></td>
+                      <td>
+                        <span style={{
+                          fontFamily: 'monospace', fontSize: 12, fontWeight: 800,
+                          color: '#1d4ed8', background: '#eff6ff',
+                          padding: '2px 6px', borderRadius: 4, display: 'inline-block'
+                        }}>
+                          {w.pn || '-'}
+                        </span>
+                      </td>
                       <td style={{ fontWeight: 600 }}>{w.productName}</td>
                       <td style={{ color: '#475569', fontSize: 13 }}>{w.processName}</td>
                       <td><span className={`badge ${pr.cls}`}>{pr.label}</span></td>
@@ -278,8 +355,23 @@ export default function WorkOrdersPage() {
                         <ProgressBar value={w.progressRate} color={pc} height={6} showLabel />
                       </td>
                       <td style={{ color: '#475569', fontSize: 13 }}>{w.assignedTo || '-'}</td>
-                      <td style={{ color: '#64748b', fontSize: 12 }}>
-                        {w.plannedStart ? new Date(w.plannedStart).toLocaleDateString('ko-KR') : '-'}
+                      <td>
+                        {w.customerDueDate ? (() => {
+                          const due = new Date(w.customerDueDate);
+                          const today = new Date();
+                          const diff = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                          const isOverdue = diff < 0 && w.status !== 'completed';
+                          const isUrgent = diff >= 0 && diff <= 3 && w.status !== 'completed';
+                          return (
+                            <div style={{ lineHeight: 1.3 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: isOverdue ? '#dc2626' : isUrgent ? '#d97706' : '#1e293b' }}>
+                                {due.toLocaleDateString('ko-KR')}
+                              </div>
+                              {isOverdue && <div style={{ fontSize: 10, color: '#dc2626', fontWeight: 700 }}>⚠️ 납기 초과</div>}
+                              {isUrgent && <div style={{ fontSize: 10, color: '#d97706', fontWeight: 700 }}>D-{diff}</div>}
+                            </div>
+                          );
+                        })() : <span style={{ color: '#cbd5e1', fontSize: 12 }}>-</span>}
                       </td>
                       <td><span className={`badge ${st.cls}`}>{st.label}</span></td>
                       <td>
@@ -295,7 +387,7 @@ export default function WorkOrdersPage() {
               </tbody>
             </table>
             <div className="table-footer">
-              <span>총 {filtered.length}건</span>
+              <span>검색 결과 <strong>{filtered.length}</strong>건 / 전체 {workOrders.length}건</span>
               <span style={{ fontWeight: 600, color: '#1e293b' }}>
                 진행중 {workOrders.filter(w => w.status === 'in_progress').length}건 · 완료 {workOrders.filter(w => w.status === 'completed').length}건
               </span>
@@ -317,30 +409,56 @@ export default function WorkOrdersPage() {
               <form id="wo-form" onSubmit={handleCreate}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label">품번(P/N)으로 공정 검색</label>
+                    <input className="form-input" placeholder="예) 60830090, 40006510 — 품번 입력 후 아래에서 선택"
+                      style={{ borderColor: '#2563eb', borderWidth: 2, fontWeight: 600 }}
+                      onChange={e => {
+                        const v = e.target.value.toLowerCase();
+                        // 입력값과 일치하는 공정이 1개면 자동 선택
+                        const matched = processes.filter(p =>
+                          p.status === 'active' &&
+                          (p.pn.toLowerCase().includes(v) || p.name.toLowerCase().includes(v))
+                        );
+                        if (matched.length === 1) setForm({ ...form, processId: matched[0].id });
+                      }}
+                    />
+                  </div>
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
                     <label className="form-label">공정 선택 *</label>
                     <select className="form-input" value={form.processId} required
                       onChange={e => setForm({ ...form, processId: e.target.value })}>
-                      <option value="">공정을 선택하세요</option>
-                      {processes.filter(p => p.status === 'active' || (p as any).status !== 'inactive').map(p => (
-                        <option key={p.id} value={p.id}>[{p.processCode}] {p.name}</option>
+                      <option value="">공정을 선택하세요 (품번 입력 또는 직접 선택)</option>
+                      {processes.filter(p => p.status === 'active').map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.pn ? `[${p.pn}] ` : ''}{p.name}{p.customer ? ` — ${p.customer}` : ''}
+                        </option>
                       ))}
                     </select>
                   </div>
-                  {form.processId && (
-                    <div style={{ gridColumn: 'span 2', padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
-                      <div style={{ fontSize: 12, color: '#0e7490', fontWeight: 600, marginBottom: 4 }}>선택된 공정 단계</div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {processes.find(p => p.id === form.processId)?.steps.map(s => (
-                          <span key={s.stepNo} style={{ fontSize: 12, background: '#e0f2fe', color: '#0369a1', padding: '2px 8px', borderRadius: 99, fontWeight: 500 }}>
-                            {s.stepNo}. {s.name}
+                  {form.processId && (() => {
+                    const selProc = processes.find(p => p.id === form.processId);
+                    return selProc ? (
+                      <div style={{ gridColumn: 'span 2', padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
+                        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 6 }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 800, color: '#1d4ed8', background: '#dbeafe', padding: '2px 8px', borderRadius: 4 }}>
+                            P/N: {selProc.pn || '-'}
                           </span>
-                        ))}
+                          <span style={{ fontWeight: 700, fontSize: 14 }}>{selProc.name}</span>
+                          {selProc.customer && <span style={{ fontSize: 12, color: '#475569' }}>{selProc.customer}</span>}
+                        </div>
+                        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                          {selProc.steps.map(s => (
+                            <span key={s.stepNo} style={{ fontSize: 11, background: '#e0f2fe', color: '#0369a1', padding: '2px 7px', borderRadius: 99, fontWeight: 600 }}>
+                              #{s.stepNo} {s.name}{s.company ? ` / ${s.company}` : ''}
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    ) : null;
+                  })()}
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
-                    <label className="form-label">제품명 *</label>
-                    <input className="form-input" value={form.productName} required placeholder="생산할 제품명"
+                    <label className="form-label">품명 *</label>
+                    <input className="form-input" value={form.productName} required placeholder="생산할 품명"
                       onChange={e => setForm({ ...form, productName: e.target.value })} />
                   </div>
                   <div className="form-group">
@@ -364,6 +482,14 @@ export default function WorkOrdersPage() {
                     <label className="form-label">계획 완료일시</label>
                     <input type="datetime-local" className="form-input" value={form.plannedEnd}
                       onChange={e => setForm({ ...form, plannedEnd: e.target.value })} />
+                  </div>
+                  <div className="form-group" style={{ gridColumn: 'span 2' }}>
+                    <label className="form-label" style={{ color: '#dc2626', fontWeight: 700 }}>
+                      고객사 납기일 <span style={{ fontWeight: 400, color: '#64748b', fontSize: 11 }}>(customer due date)</span>
+                    </label>
+                    <input type="date" className="form-input" value={form.customerDueDate}
+                      style={{ borderColor: form.customerDueDate ? '#dc2626' : undefined, borderWidth: form.customerDueDate ? 2 : undefined }}
+                      onChange={e => setForm({ ...form, customerDueDate: e.target.value })} />
                   </div>
                   <div className="form-group" style={{ gridColumn: 'span 2' }}>
                     <label className="form-label">담당자</label>
@@ -393,8 +519,13 @@ export default function WorkOrdersPage() {
             <div className="modal-header">
               <div>
                 <div className="modal-title">공정 진행도 입력</div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2, fontFamily: 'monospace' }}>
-                  {progressModal.workOrderNo} · {progressModal.productName}
+                <div style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center' }}>
+                  {progressModal.pn && (
+                    <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 800, color: '#1d4ed8', background: '#eff6ff', padding: '1px 7px', borderRadius: 4 }}>
+                      P/N: {progressModal.pn}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 12, color: '#64748b' }}>{progressModal.productName}</span>
                 </div>
               </div>
               <button className="modal-close" onClick={() => setProgressModal(null)}><XIcon /></button>
@@ -542,6 +673,19 @@ export default function WorkOrdersPage() {
                   { label: '완료 수량', value: <span style={{ fontWeight: 700, color: '#15803d' }}>{viewModal.completedQty.toLocaleString()}</span> },
                   { label: '불량 수량', value: <span style={{ fontWeight: 700, color: '#b91c1c' }}>{viewModal.defectQty}</span> },
                   { label: '담당자', value: viewModal.assignedTo || '-' },
+                  { label: '고객사 납기일', value: viewModal.customerDueDate ? (() => {
+                    const due = new Date(viewModal.customerDueDate);
+                    const diff = Math.ceil((due.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                    const isOverdue = diff < 0 && viewModal.status !== 'completed';
+                    const isUrgent = diff >= 0 && diff <= 3 && viewModal.status !== 'completed';
+                    return (
+                      <span style={{ fontWeight: 700, color: isOverdue ? '#dc2626' : isUrgent ? '#d97706' : '#1e293b' }}>
+                        {due.toLocaleDateString('ko-KR')}
+                        {isOverdue && ' ⚠️ 납기 초과'}
+                        {isUrgent && ` (D-${diff})`}
+                      </span>
+                    );
+                  })() : '-' },
                   { label: '계획 시작', value: viewModal.plannedStart ? new Date(viewModal.plannedStart).toLocaleString('ko-KR') : '-' },
                   { label: '계획 완료', value: viewModal.plannedEnd ? new Date(viewModal.plannedEnd).toLocaleString('ko-KR') : '-' },
                   { label: '실제 시작', value: viewModal.actualStart ? new Date(viewModal.actualStart).toLocaleString('ko-KR') : '-' },

@@ -43,7 +43,9 @@ export default function MaterialsPage() {
   const [adjustQty, setAdjustQty] = useState(0);
   const [adjustNote, setAdjustNote] = useState('');
 
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchCode, setSearchCode] = useState('');   // 품번(자재코드) 검색
+  const [searchName, setSearchName] = useState('');   // 품명(자재명) 검색
+  const [searchTerm, setSearchTerm] = useState('');   // 통합 레거시 (미사용)
   const [filterCategory, setFilterCategory] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [error, setError] = useState('');
@@ -122,11 +124,44 @@ export default function MaterialsPage() {
     }
   };
 
+  // 품번은 대소문자 무시 포함 검색, 품명도 포함 검색
   const filtered = materials.filter(m =>
-    (!searchTerm || m.materialCode.includes(searchTerm) || m.name.includes(searchTerm) || m.supplierName.includes(searchTerm)) &&
+    (!searchCode || m.materialCode.toLowerCase().includes(searchCode.toLowerCase())) &&
+    (!searchName || m.name.toLowerCase().includes(searchName.toLowerCase()) || m.supplierName.toLowerCase().includes(searchName.toLowerCase())) &&
     (!filterCategory || m.category === filterCategory) &&
     (!filterStatus || m.status === filterStatus)
   );
+
+  /* ── 엑셀(CSV) 내보내기 ── */
+  const exportExcel = () => {
+    const BOM = '\uFEFF';
+    const headers = ['자재코드(품번)', '자재명(품명)', '분류', '단위', '현재재고', '최소재고', '단가(원)', '재고가치(원)', '위치', '공급업체', '상태', '최종업데이트'];
+    const statusLabel: Record<string, string> = { normal: '정상', low: '부족', out: '소진' };
+    const rows = filtered.map(m => [
+      m.materialCode,
+      m.name,
+      m.category,
+      m.unit,
+      m.stockQty,
+      m.minQty,
+      m.unitCost,
+      m.stockQty * m.unitCost,
+      m.location || '',
+      m.supplierName || '',
+      statusLabel[m.status] || m.status,
+      new Date(m.lastUpdated).toLocaleDateString('ko-KR'),
+    ]);
+    const csv = BOM + [headers, ...rows]
+      .map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `자재목록_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const navItems = userRole === 'admin' ? adminNav : userNav;
 
@@ -194,12 +229,18 @@ export default function MaterialsPage() {
           <h2>자재 관리</h2>
           <p>공정에 사용되는 자재 재고를 관리합니다.</p>
         </div>
-        {userRole === 'admin' && (
-          <button className="btn btn-primary" onClick={() => { setForm(blankForm); setError(''); setCreateModal(true); }}>
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-            자재 등록
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={exportExcel}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            엑셀 내보내기
           </button>
-        )}
+          {userRole === 'admin' && (
+            <button className="btn btn-primary" onClick={() => { setForm(blankForm); setError(''); setCreateModal(true); }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+              자재 등록
+            </button>
+          )}
+        </div>
       </div>
 
       {success && <div className="alert alert-success">{success}</div>}
@@ -222,24 +263,41 @@ export default function MaterialsPage() {
 
       {/* 필터 */}
       <div className="filter-bar">
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <input className="form-input" placeholder="자재코드, 자재명, 공급업체 검색..."
-            value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: '0 0 200px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', letterSpacing: '0.04em' }}>품번(자재코드)</div>
+          <input className="form-input" placeholder="예) MAT-001"
+            value={searchCode} onChange={e => setSearchCode(e.target.value)}
+            style={{ borderColor: searchCode ? '#2563eb' : undefined }} />
         </div>
-        <select className="form-input" style={{ width: 120 }} value={filterCategory}
-          onChange={e => setFilterCategory(e.target.value)}>
-          <option value="">전체 분류</option>
-          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select className="form-input" style={{ width: 110 }} value={filterStatus}
-          onChange={e => setFilterStatus(e.target.value)}>
-          <option value="">전체 상태</option>
-          <option value="normal">정상</option>
-          <option value="low">부족</option>
-          <option value="out">소진</option>
-        </select>
-        {(searchTerm || filterCategory || filterStatus) && (
-          <button className="btn btn-secondary" onClick={() => { setSearchTerm(''); setFilterCategory(''); setFilterStatus(''); }}>초기화</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 160 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.04em' }}>품명(자재명/공급업체)</div>
+          <input className="form-input" placeholder="자재명 또는 공급업체명"
+            value={searchName} onChange={e => setSearchName(e.target.value)}
+            style={{ borderColor: searchName ? '#2563eb' : undefined }} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.04em' }}>분류</div>
+          <select className="form-input" style={{ width: 120 }} value={filterCategory}
+            onChange={e => setFilterCategory(e.target.value)}>
+            <option value="">전체 분류</option>
+            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', letterSpacing: '0.04em' }}>상태</div>
+          <select className="form-input" style={{ width: 110 }} value={filterStatus}
+            onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">전체 상태</option>
+            <option value="normal">정상</option>
+            <option value="low">부족</option>
+            <option value="out">소진</option>
+          </select>
+        </div>
+        {(searchCode || searchName || filterCategory || filterStatus) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'flex-end' }}>
+            <div style={{ fontSize: 11, opacity: 0 }}>.</div>
+            <button className="btn btn-secondary" onClick={() => { setSearchCode(''); setSearchName(''); setFilterCategory(''); setFilterStatus(''); }}>초기화</button>
+          </div>
         )}
       </div>
 
@@ -305,7 +363,7 @@ export default function MaterialsPage() {
               </tbody>
             </table>
             <div className="table-footer">
-              <span>총 {filtered.length}건</span>
+              <span>검색 결과 <strong>{filtered.length}</strong>건 / 전체 {materials.length}건</span>
               <span style={{ fontWeight: 600, color: '#1e293b' }}>
                 재고 부족 {materials.filter(m => m.status !== 'normal').length}건
               </span>

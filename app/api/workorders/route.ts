@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
   try {
     const authUser = requireAuth(request);
     const body = await request.json();
-    const { processId, productName, targetQty, priority, plannedStart, plannedEnd, assignedTo, notes } = body;
+    const { processId, productName, targetQty, priority, plannedStart, plannedEnd, customerDueDate, assignedTo, notes } = body;
 
     if (!processId || !productName || !targetQty) {
       return NextResponse.json({ error: '공정, 제품명, 수량은 필수입니다.' }, { status: 400 });
@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
     const newWO = {
       id: generateId(),
       workOrderNo,
+      pn: proc.pn || '',       // 공정의 업체 P/N 자동 복사
       processId,
       processName: proc.name,
       productName,
@@ -56,6 +57,7 @@ export async function POST(request: NextRequest) {
       steps,
       plannedStart: plannedStart || '',
       plannedEnd: plannedEnd || '',
+      customerDueDate: customerDueDate || '',
       actualStart: '',
       actualEnd: '',
       assignedTo: assignedTo || '',

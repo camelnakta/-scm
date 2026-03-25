@@ -16,16 +16,33 @@ export async function POST(request: NextRequest) {
   try {
     const authUser = requireAuth(request);
     const body = await request.json();
-    const { name, category, description, steps } = body;
-    if (!name || !category) return NextResponse.json({ error: '공정명과 분류는 필수입니다.' }, { status: 400 });
+    const { pn, matCode, name, category, customer, project, description, steps } = body;
+
+    if (!name) return NextResponse.json({ error: '품명은 필수입니다.' }, { status: 400 });
 
     const count = db.processes.length + 1;
     const newProcess = {
       id: generateId(),
-      processCode: `PROC-${String(count).padStart(3, '0')}`,
-      name, category,
+      processCode: `PROC-${String(count).padStart(4, '0')}`,
+      pn: pn || '',
+      matCode: matCode || '',
+      name,
+      category: category || '기타',
+      customer: customer || '',
+      project: project || '',
       description: description || '',
-      steps: steps || [],
+      // steps: stepNo 순 정렬, company 필드 보장
+      steps: (steps || [])
+        .map((s: { stepNo?: number; name?: string; company?: string; description?: string; stdTime?: number; equipmentId?: string; equipmentName?: string }) => ({
+          stepNo: Number(s.stepNo) || 10,
+          name: s.name || '',
+          company: s.company || '',
+          description: s.description || '',
+          stdTime: Number(s.stdTime) || 0,
+          equipmentId: s.equipmentId || '',
+          equipmentName: s.equipmentName || '',
+        }))
+        .sort((a: { stepNo: number }, b: { stepNo: number }) => a.stepNo - b.stepNo),
       status: 'active' as const,
       createdAt: new Date().toISOString(),
       createdBy: authUser.username,

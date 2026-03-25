@@ -147,12 +147,34 @@ export default function EquipmentPage() {
           <h2>설비 현황 관리</h2>
           <p>공정에 사용되는 설비 상태 및 가동률을 관리합니다.</p>
         </div>
-        {userRole === 'admin' && (
-          <button className="btn btn-primary" onClick={() => { setForm(blankForm); setError(''); setCreateModal(true); }}>
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-            설비 등록
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-secondary" onClick={() => {
+            const BOM = '\uFEFF';
+            const headers = ['설비코드', '설비명', '분류', '위치', '상태', '가동률(%)', '담당공정', '최종정비일', '다음정비예정'];
+            const statusLabelMap: Record<string,string> = { running:'가동중', idle:'대기', maintenance:'정비중', breakdown:'고장' };
+            const rows = filtered.map(e => [
+              e.equipmentCode, e.name, e.category, e.location||'', statusLabelMap[e.status]||e.status,
+              e.utilizationRate, e.assignedProcess||'',
+              e.lastMaintenance ? new Date(e.lastMaintenance).toLocaleDateString('ko-KR') : '',
+              e.nextMaintenance ? new Date(e.nextMaintenance).toLocaleDateString('ko-KR') : '',
+            ]);
+            const csv = BOM + [headers, ...rows].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `설비목록_${new Date().toISOString().slice(0,10)}.csv`;
+            a.click(); URL.revokeObjectURL(url);
+          }}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+            엑셀 내보내기
           </button>
-        )}
+          {userRole === 'admin' && (
+            <button className="btn btn-primary" onClick={() => { setForm(blankForm); setError(''); setCreateModal(true); }}>
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+              설비 등록
+            </button>
+          )}
+        </div>
       </div>
 
       {success && <div className="alert alert-success">{success}</div>}
@@ -273,6 +295,10 @@ export default function EquipmentPage() {
                 등록된 설비가 없습니다.
               </div>
             )}
+          </div>
+          {/* 검색 결과 표시 */}
+          <div style={{ padding: '10px 4px', fontSize: 13, color: '#64748b', fontWeight: 500 }}>
+            검색 결과 <strong style={{ color: '#1e293b' }}>{filtered.length}</strong>대 / 전체 {equipment.length}대
           </div>
         </>
       )}
